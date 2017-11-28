@@ -98,6 +98,15 @@ function print_help {
     echo -e "\t\t44895;Polska;Poland;Polen;ポーランド;Pologne"
     echo -e "\t\t40981;Klucz (architektura);;;;"
     echo -e "\t\t..."
+    echo -e "\t${SCRIPT_NAME} -f --wikitag '[[Kategoria:Informatyka]]' pl en de"
+    echo -e "\t\trun script for Polish language and English, German translation, print titles into STDIO, print all title - if transtaltion does not exist then is empty, search with Wikitag [[Kategoria:Informatyka]] - it will be download extra ~5GB Wikipedia dump for searching tag"
+    echo -e "\t\tExample output:"
+    echo -e "\t\t..."
+    echo -e "\t\tTeleinformatyka;Information and communications technology;Informations- und Kommunikationstechnik"
+    echo -e "\t\tArgumentowość;Arity;Stelligkeit"
+    echo -e "\t\tTeoria systemów;Systems theory;Systemtheorie"
+    echo -e "\t\tMoc obliczeniowa;Computer performance;Rechenleistung"
+    echo -e "\t\t..."
 }
 
 function print_help_h {
