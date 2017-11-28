@@ -1,0 +1,454 @@
+#!/bin/bash
+
+SCRIPT_NAME='wikititle'
+LANG_FILE='data/cache_lang.tmp'
+DIR_DATA='data'
+SEPARATOR=';'
+SAVE_FILE=''
+HEADER=0
+FORCE=0
+OVERRIDE=0
+ID=0
+IGNORE=0
+SEP=0
+WIKITAG=''
+
+MAIN_ARGS=()
+
+# List wikipeida language: https://en.wikipedia.org/wiki/List_of_Wikipedias
+
+function echo_err {
+    echo "$@" >&2
+}
+
+function print_help {
+    echo -e "${SCRIPT_NAME} - script for printing list all Wikipedia title in few language (if one of them/translation do not exist, line/title is ignored) from Wikipedia dump (dump are downloaded automatically - will be downloaded 2 files)"
+    echo ""
+    echo -e "WARNING - Wikipedia dump may require some space on disc (from ~50MB to ~2GB per file) and RAM"
+    echo -e "Example:"
+    echo -e "\t for English and German (${SCRIPT_NAME} en de) require ~2GB space and ~5GB RAM"
+    echo -e "\t for Polish, English and German (${SCRIPT_NAME} pl en de) require ~700MB and ~1GB RAM"
+    echo -e "\t Depends on the number of article in soruce Wikipedia"
+    echo ""
+    echo -e "Little note:"
+    echo -e "\t All log or error info are output into stderr"
+    echo ""
+    echo -e "Usage:"
+    echo -e "\t${SCRIPT_NAME} [options] <source langauge> <translate languange list>"
+    echo ""
+    echo -e "Available option:"
+    echo -e "\t-h, --help"
+    echo -e "\t\tPrint help message (this message)"
+    echo -e "\t--cache"
+    echo -e "\t\tReload caches (list language) and exit"
+    echo -e "\t-c, --clean"
+    echo -e "\t\tRemove all unnecessary files (cache + Wikipedia dump) and exit"
+    echo -e "\t-f, --force"
+    echo -e "\t\tPrint title if do not have translation"
+    echo -e "\t--head, --header"
+    echo -e "\t\tPrint language name in first row"
+    echo -e "\t--id"
+    echo -e "\t\tGet article id (as first column) - it is id defined in specific language, not global id (Wikidata ID)"
+    echo -e "\t\tId can be used to create article link, e.g. http://en.wikipedia.org/?curid={ID} where {ID} is id article for source language Wikipedia"
+    echo -e "\t--ignore"
+    echo -e "\t\tIgnore checking program and libs"
+    echo -e "\t-l, --lang"
+    echo -e "\t\tPrint all available langauge"
+    echo -e "\t-o, --override"
+    echo -e "\t\tOverride downloaded Wikipedia dump"
+    echo -e "\t-s SEP, --sep SEP, --separator SEP"
+    echo -e "\t\tSet separator between translation (default: ';')"
+    echo -e "\t-w FILE_NAME, --write FILE_NAME, --file FILE_NAME"
+    echo -e "\t\tWrite output into FILE_NAME file (default is out.txt file)"
+    echo -e "\t\tor redirect stdout to file"
+    echo -e "\t--wikitag WIKITAG"
+    echo -e "\t\tWiki tag for searching specific article, it will download hude Wikipedia dump (from 10GB to 50GB after decompres)"
+    echo -e "\t\te.g. {{Imiona}} for Polish Wikipedia"
+    echo -e "\t\t     [[Category:English masculine given names]] for English Wikipedia"
+    echo ""
+    echo -e "Example:"
+    echo -e "\t${SCRIPT_NAME} pl en"
+    echo -e "\t\trun script for Polish language and English translation, print titles into STDIO"
+    echo -e "\t\tExample output:"
+    echo -e "\t\t..."
+    echo -e "\t\tPolska;Poland"
+    echo -e "\t\tEuropa;Europe"
+    echo -e "\t\t..."
+    echo -e "\t${SCRIPT_NAME} pl en -f"
+    echo -e "\t\trun script for Polish language and English, French translation, print titles into STDIO, print all title - if transtaltion does not exist then is empty"
+    echo -e "\t\tExample output:"
+    echo -e "\t\t..."
+    echo -e "\t\tPolska;Poland;Pologne"
+    echo -e "\t\tEuropa;Europe;Europe"
+    echo -e "\t\tKT-90;;"
+    echo -e "\t\t..."
+    echo -e "\t${SCRIPT_NAME} en de pl -w out.tsv -s '\\\\t'"
+    echo -e "\t\trun script for English language and German, Polish translation, save titles into out.tsv, separator title is tabulation"
+    echo -e "\t\tExample output in out.tsv file:"
+    echo -e "\t\t..."
+    echo -e "\t\tPoland\tPolen\tPolska"
+    echo -e "\t\tEurope\tEuropa\tEuropa"
+    echo -e "\t\t..."
+    echo -e "\t${SCRIPT_NAME} pl en de ja fr --header -f --id"
+    echo -e "\t\trun script for Polish language and English, German, Japanese, French translation, print titles into STDIO, print langauage list, print all title - if transtaltion does not exist then is empty, print id article for Polish Wikipedia"
+    echo -e "\t\tExample output:"
+    echo -e "\t\tid;Polish;English;German;Japanese;French"
+    echo -e "\t\t..."
+    echo -e "\t\t44854;Europa;Europe;Europa;ヨーロッパ;Europe"
+    echo -e "\t\t44895;Polska;Poland;Polen;ポーランド;Pologne"
+    echo -e "\t\t40981;Klucz (architektura);;;;"
+    echo -e "\t\t..."
+}
+
+function print_help_h {
+    echo_err "[LOG] Run: \`${SCRIPT_NAME} -h\` - see help page"
+}
+
+function print_help_lang {
+    echo_err "[LOG] Run: \`${SCRIPT_NAME} --lang\` - list available language"
+}
+
+function create_data_dir {
+    mkdir -p "${DIR_DATA}"
+}
+
+function add_lang {
+    if [ "$#" -lt 1 ]
+    then
+	return
+    fi
+    for lang in ${lang_list}
+    do
+	if [ "${lang}" == "$1" ]
+	then
+	    return
+	fi
+    done
+    lang_list+=("$1")
+}
+
+function get_lang {
+    create_data_dir
+    if [ ! -f ${LANG_FILE} ] || [ ! -s ${LANG_FILE} ]
+    then
+	echo_err "[LOG] Cache available Wikipedia"
+	ruby xpath.rb > ${LANG_FILE}
+	if [ "$?" -ne "0" ]
+	then
+	    return -1
+	else
+	    echo_err "[LOG] Cache loaded"
+	fi
+    fi
+    return 0
+}
+
+function download_file {
+    # $1 - langugae
+    # $2 - file name
+    # $3 - archive extension
+    # $4 - out file
+    if [ "$#" -lt 4 ]
+    then
+	return -1
+    fi
+    lang="$1"
+    wget_file="${lang}$2"
+    extenstion="$3"
+    wget_url="https://dumps.wikimedia.org/${lang}wiki/latest/${wget_file}.${extenstion}"
+    out_file_archive="${DIR_DATA}/${wget_file}.${extenstion}"
+    out_file="${DIR_DATA}/$4"
+    if [ "${OVERRIDE}" -eq 0 ] && [ -f "${out_file}" ]
+    then
+	echo_err "[LOG] File ${out_file} exist, skip downloading"
+	return 0
+    fi
+    wget -N -P "${DIR_DATA}" "${wget_url}" >&2
+    wget_code="$?"
+    if [ "${wget_code}" -ne 0 ] && [ "${wget_code}" -ne 1 ]
+    then
+	echo_err "[ERR] Cannot download: ${wget_url}"
+	return -1
+    fi
+    echo_err "[LOG] Decompressing"
+    case ${extenstion} in
+	gz)
+	    gzip -f -d "${out_file_archive}"
+	    ;;
+	bz2)
+	    bzip2 -f -d "${out_file_archive}"
+	    ;;
+	*)
+	    echo_err "[ERR] Unknown extenstion ${extenstion}"
+	    return -1
+	    ;;
+    esac
+    mv "${DIR_DATA}/${wget_file}" "${out_file}"
+}
+
+function download_lang {
+    # $1 - language
+    if [ "$#" -lt 1 ]
+    then
+	return -1
+    fi
+    lang="$1"
+    create_data_dir
+    echo_err "[LOG] Downloading language: ${lang}"
+    download_file "${lang}" "wiki-latest-pages-articles-multistream-index.txt" "bz2" "${lang}.txt"
+    if [ "$?" -ne 0 ]
+    then
+	exit -1
+    fi
+    download_file "${lang}" "wiki-latest-langlinks.sql" "gz" "${lang}-langlinks.sql"
+    if [ "$?" -ne 0 ]
+    then
+	exit -1
+    fi
+    if [ "${WIKITAG}" != "" ]
+    then
+	download_file "${lang}" "wiki-latest-pages-articles.xml" "bz2" "${lang}-wiki.xml"
+	if [ "$?" -ne 0 ]
+	then
+	    exit -1
+	fi
+    fi       
+    echo_err "[LOG] Done"
+    return 0
+}
+
+#main script:
+if [ "$#" -gt 0 ]
+then
+    lang_list=()
+    #get args
+    while [ "$#" -gt 0 ]
+    do
+	key=`echo $1 | sed -E 's/^\s+//;s/\s+$//'`
+	case ${key} in
+	    "")
+		break
+		;;
+	    -h|--help|help)
+		print_help
+		shift
+		exit 0
+		;;
+	    --cache|cache)
+		rm -rf "${LANG_FILE}"
+		get_lang
+		shift
+		exit 0
+		;;
+	    -c|--clean|clean)
+		rm -rf "${DIR_DATA}"
+		shift
+		exit 0
+		;;
+	    -f|--force|force)
+		if [ "${FORCE}" -ne 1 ]
+		then
+		    MAIN_ARGS+=('-f')
+		fi
+		FORCE=1
+		shift
+		;;
+	    --head|--header|head|header)
+		HEADER=1
+		shift
+		;;
+	    --id)
+		if [ "${ID}" -ne 1 ]
+		then
+		    MAIN_ARGS+=("--id")
+		fi
+		ID=1
+		shift
+		;;
+	    --ignore)
+		IGNORE=1
+		shift
+		;;
+	    -l|--lang|lang)
+		get_lang
+		more ${LANG_FILE}
+		shift
+		exit 0
+		;;
+	    -o|--override|override)
+		OVERRIDE=1
+		shift
+		;;
+	    -s|--sep|--separator|sep|separator)
+		shift
+		if [ "${SEP}" -eq 1 ]
+		then
+		    echo_err "[ERR] Separator can not be given more than once"
+		    exit -1
+		else
+		    case $1 in
+			'\n')
+			    SEPARATOR="\n"
+			    MAIN_ARGS+=('-s \n')
+			    ;;
+			'\t')
+			    SEPARATOR="\t"
+			    MAIN_ARGS+=('-s \t')
+			    ;;
+			*)
+			    SEPARATOR="$1"
+			    MAIN_ARGS+=("-s ${SEPARATOR}")
+			    ;;
+		    esac
+		fi
+		SEP=1
+		shift
+		;;
+	    -w|--write|--file|write|file)
+		shift
+		SAVE_FILE="$1"
+		shift
+		;;
+	    --wikitag)
+		shift
+		WIKITAG="$1"
+		shift
+		;;
+	    *)
+		echo "${key}" | grep -E "^[-]" > /dev/null
+		if [ "$?" -eq "0" ]
+		then
+		    echo_err "[ERR] Unknown option: ${key}"
+		    exit -1
+		else
+		    add_lang "${key}"
+		fi
+		shift
+		;;
+	esac
+    done
+    #check system have require tools
+    if [ "${IGNORE}" -eq 0 ]
+    then
+	for app in "wget" "grep" "sed" "bzip2" "gzip" "ruby"
+	do
+	    ${app} --version &> /dev/null
+	    if [ "$?" -ne 0 ]
+	    then
+		echo_err "[ERR] Cannot find '${app}' program!"
+		exit -1
+	    fi
+	done
+	#check Internet is online
+	ping -q -w 1 -c 1 `ip r | grep default | cut -d ' ' -f 3` &> /dev/null
+	if [ "$?" -ne 0 ]
+	then
+	    echo_err "[ERR] Problem with Internet access!"
+	    exit -1
+	fi
+	for gem_name in "nokogiri"
+	do
+	    gem list | grep -E "^${gem_name} " &> /dev/null
+	    if [ "$?" -ne 0 ]
+	    then
+		echo_err "[ERR] Cannot find '${gem_name}' library for ruby"
+		exit -1
+	    fi
+	done
+    fi
+    #cache language
+    get_lang
+    if [ "$?" -ne 0 ]
+    then
+	exit -1
+    fi
+    #check lang exist
+    if [ "${#lang_list[@]}" -eq 0 ]
+    then
+	echo_err "[ERR] Language was not given"
+	print_help_h
+	exit -1
+    fi
+    #check languages
+    if [ "${#lang_list[@]}" -nt 2 ]
+    then
+	echo_err "[ERR] Language list was not given"
+	exit -1
+    fi
+    for lang in ${lang_list[@]}
+    do
+	#check if language name have invalid character
+	wrong_char=`echo "${lang}" | grep -Eoi "[^a-z-]"`
+	if [ "$?" -eq 0 ]
+	then
+	    echo_err "[ERR] Invalid character '${wrong_char}' in langauage: ${lang}"
+	    print_help_lang
+	    exit -1
+	fi
+	#check language exist
+	grep -E "^${lang} =" ${LANG_FILE} > /dev/null
+	if [ "$?" -ne 0 ]
+	then
+	    echo_err "[ERR] Unknown langunage: ${lang}"
+	    print_help_lang
+	    exit -1
+	fi
+    done
+    #download Wikipedia dump
+    download_lang ${lang_list[0]}
+    if [ "$?" -ne 0 ]
+    then
+	exit -1
+    fi
+    #done
+    #get header name
+    if [ "${HEADER}" -eq 1 ]
+    then
+	header=''
+	if [ "${ID}" -eq 1 ]
+	then
+	    header="id"
+	fi
+	for lang in ${lang_list[@]}
+	do
+	    lang_name=`cat ${LANG_FILE} | grep -E "^${lang} = " | sed -E "s/^${lang} = //;s/^\s+//;s/\s+$//"`
+	    if [ "${header}" == "" ]
+	    then
+		header="${lang_name}"
+	    else
+		header="${header}${SEPARATOR}${lang_name}"
+	    fi
+	done
+	if [ "${SAVE_FILE}" == "" ]
+	then
+	    echo -e "${header}"
+	else
+	    echo -e "${header}" > "${SAVE_FILE}"
+	fi
+    fi
+    # main script
+    echo_err "[LOG] Running script for language: ${lang_list[0]} and translation: ${lang_list[@]:1}"
+    if [ "${SAVE_FILE}" == "" ]
+    then
+	if [ "${WIKITAG}" == "" ]
+	then
+	    ruby main.rb ${MAIN_ARGS[@]} ${lang_list[@]}
+	else
+	    ruby main.rb ${MAIN_ARGS[@]} "--wikitag" "${WIKITAG}" ${lang_list[@]}
+	fi
+    else
+	if [ "${HEADER}" -eq 0 ]
+	then
+	    printf "" > "${SAVE_FILE}"
+	fi
+	if [ "${WIKITAG}" == "" ]
+	then
+	    ruby main.rb ${MAIN_ARGS[@]} ${lang_list[@]} >> "${SAVE_FILE}"
+	else
+	    ruby main.rb ${MAIN_ARGS[@]} "--wikitag" "${WIKITAG}" ${lang_list[@]}  >> "${SAVE_FILE}"
+	fi
+    fi
+    echo_err "[LOG] Script finished"
+else
+    print_help
+fi
