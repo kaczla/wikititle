@@ -1,0 +1,4 @@
+#!/bin/sh
+
+cd ..
+./wikititle -f --wikitag '{{Imiona}}' pl en de

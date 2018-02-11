@@ -1,0 +1,4 @@
+#!/bin/sh
+
+cd ..
+./wikititle -f --wikitag '[[Kategoria:Państwa członkowskie Unii Europejskiej]]' pl en de

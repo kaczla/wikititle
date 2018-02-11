@@ -1,0 +1,4 @@
+#!/bin/sh
+
+cd ..
+./wikititle -f --wikitag '[[Kategoria:Informatyka]]' pl en de
